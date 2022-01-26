@@ -13,10 +13,10 @@ def get_args():
     parser.add_argument('rooms', nargs='*', type=str, help="La lista delle aule nelle quali dividere gli studenti.")
     parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
     parser.add_argument('--excluded_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
-    perser.add_argument('--multimedia_room', type=str, default="5T", help="Aula multimediale nella quale inserire excluded_students. Default è '5T'.")
+    parser.add_argument('--multimedia_room', type=str, default="5T", help="Aula multimediale nella quale inserire excluded_students. Default è '5T'.")
     parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Nome dei files di output. Default: '<COD>_yyyymmdd'.")
-    parser.add_argument("--style", action="store_true", default="Add style to the resulting sheet.")
+    parser.add_argument("--style", action="store_true", help="Add style to the resulting sheet.")
     args = parser.parse_args()
     return args
 
@@ -34,29 +34,31 @@ def stamp_id(room_name, config, matricole, prenotati):
     rows = list(map(int, re.findall(r"\d+", window)))
     cols = re.findall(r"[a-zA-Z]", window)
 
-    # cols = [ord(a.lower())-97 for a in cols]
+    cols = [ord(a.lower())-97 for a in cols]
     if "filename" in config:
         if config["filename"].endswith(".csv"):
             aula = pd.read_csv(config["filename"], sep="\t", header=None)
         elif config["filename"].endswith(".xlsx"):
-            aula = pd.read_excel(config["filename"]) # TODO: this may not work now
+            aula = pd.read_excel(config["filename"], sheet_name=config["sheet"], header=None)
         
     else: # retrieve from Google's API
         # this might return a wrong CSV, beware
         sheet_id = "1yuDN40n8pcoP2FgjUwuR6oxKvNRSa2jbJTVhOrsB5_A"
-        sheet_name = sheet_name.replace(" ", "%20")
+        sheet_name = config["sheet"].replace(" ", "%20")
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
         aula = pd.read_csv(
             url,
             header=None
         )
-
+        
+    col_names = aula.loc[rows[0]-1, cols[0]+1: cols[1]]  
     aula = aula.iloc[rows[0]: rows[1], cols[0]: cols[1] + 1].copy()
-    aula = aula.set_index(aula.columns[0])
+    aula = aula.set_index(aula.columns[0]).rename_axis(None)
+    aula.columns = col_names
 
     slots = (~aula.isna()).sum().sum()
         
-    print(slots, len(matricole))
+    print(f"| Room {room_name} | Slots: {slots}, remaining students: {len(matricole)}")
 
     if len(matricole) < np.nansum(aula.values):
         matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
@@ -75,7 +77,6 @@ def stamp_id(room_name, config, matricole, prenotati):
             break
         
         for j, place in row.iteritems():
-            
             if not matricole:
                 break
                 
@@ -101,8 +102,9 @@ def stamp_id(room_name, config, matricole, prenotati):
 
 def styled_seats(x):
     checkerboard = lambda d: np.row_stack(d[0]*(np.r_[d[1]*[True,False]], np.r_[d[1]*[False,True]]))[:d[0], :d[1]]
-    
-    df1 = pd.DataFrame(np.where((x.values != "")&checkerboard(x.shape), 
+    if np.NaN in x.index: x.loc[np.NaN, :] = np.NaN
+    if np.NaN in x.columns: x.loc[:, np.NaN] = np.NaN
+    df1 = pd.DataFrame(np.where(x.notna()&checkerboard(x.shape), 
                                 'background-color: lightgrey;\
                                 width: 50px;\
                                 text-align: center',
@@ -128,7 +130,7 @@ def main(args):
         prenotati = prenotati
     else:
         prenotati = pd.read_excel(args.students)
-        row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
+        row_toskip = (prenotati.iloc[:,0]=="MATRICOLA").argmax()
         col = prenotati.xs(row_toskip)
         prenotati = prenotati.drop(range(row_toskip+1))
         prenotati.columns = col
@@ -139,9 +141,9 @@ def main(args):
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
     
     if args.excluded_students:
-        ex_students = args.excluded_students.split(",")
+        ex_students = [int(m) for m in args.excluded_students.split(",")]
         prenotati.loc[ex_students, "AULA"] = args.multimedia_room
-        matricole = [matricole if matricole not in ex_students]
+        matricole = [m for m in matricole if m not in ex_students]
 
     with open(args.yconfig, "r") as f:
         riferimenti = yaml.load(f, yaml.SafeLoader)
@@ -157,7 +159,7 @@ def main(args):
     else:
         room_names = args.rooms
         
-    print("Room names:", room_names)
+    print("Room names:", room_names, "\n")
     
     for i, (a, room_name) in enumerate(zip(args.rooms, room_names)):
         config = riferimenti.get(a)
@@ -177,7 +179,7 @@ def main(args):
     assert len(matricole) == 0, f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})"
 
     if args.excluded_students:
-        prenotati[prenotati.AULA == args.multimedia_room].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
+        prenotati[prenotati.AULA == args.multimedia_room].to_excel(writer_p, sheet_name=f"Aula_{args.multimedia_room}")
         
     if len(room_names) > 1 or args.excluded_students:
         prenotati.to_excel(writer_p, sheet_name=f"Elenco Complessivo")
