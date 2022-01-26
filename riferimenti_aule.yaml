@@ -6,3 +6,13 @@ Rb:
   sheet: "Aule R"
   position: "B28:Q38"
   
+P_sits_38:
+  sheet: "Aule P"
+  position: "B4:R19"
+  capacity: 38
+  
+P:
+  sheet: "Aule P"
+  position: "B25:R40"
+  capacity: 46
+  filename: "Aule_P.tsv"

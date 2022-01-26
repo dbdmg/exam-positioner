@@ -12,9 +12,11 @@ def get_args():
     parser = argparse.ArgumentParser(description=f"Crea la distribuzione dei posti in un'aula a partire dall'elenco degli studenti e dalla matrice dei posti disponibili.\n IMPORTANTE: le aule devono essere rappresentate con la cattedra in basso, le file numerate in maniera crescente, lasciando uno spazio nel caso in cui non sia presenta una fila.")
     parser.add_argument('rooms', nargs='*', type=str, help="La lista delle aule nelle quali dividere gli studenti.")
     parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
-    parser.add_argument('-m', '--maps', type=Path, default=None, help="Percorso del file Excel con la mappa delle aule, se assente ricerca da file online.")
+    parser.add_argument('--excluded_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
+    perser.add_argument('--multimedia_room', type=str, default="5T", help="Aula multimediale nella quale inserire excluded_students. Default è '5T'.")
     parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Nome dei files di output. Default: '<COD>_yyyymmdd'.")
+    parser.add_argument("--style", action="store_true", default="Add style to the resulting sheet.")
     args = parser.parse_args()
     return args
 
@@ -26,45 +28,75 @@ def snake_j(row, i, j):
     return j
 
 
-def stamp_id(a_name, sheet_name, window, matricole, prenotati):
-    row_lims = re.findall(r"\d+", window)
+def stamp_id(room_name, config, matricole, prenotati):
+    window = config["position"]
+    
+    rows = list(map(int, re.findall(r"\d+", window)))
     cols = re.findall(r"[a-zA-Z]", window)
 
-    if args.maps is None:
-        cols = [ord(a.lower())-97 for a in cols]
+    # cols = [ord(a.lower())-97 for a in cols]
+    if "filename" in config:
+        if config["filename"].endswith(".csv"):
+            aula = pd.read_csv(config["filename"], sep="\t", header=None)
+        elif config["filename"].endswith(".xlsx"):
+            aula = pd.read_excel(config["filename"]) # TODO: this may not work now
+        
+    else: # retrieve from Google's API
+        # this might return a wrong CSV, beware
         sheet_id = "1yuDN40n8pcoP2FgjUwuR6oxKvNRSa2jbJTVhOrsB5_A"
         sheet_name = sheet_name.replace(" ", "%20")
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        aula = pd.read_csv(
+            url,
+            header=None
+        )
 
-        aula = pd.read_csv(url, usecols=range(cols[0], cols[1]+1),
-                                   index_col=0,  skiprows=int(row_lims[0])-1,
-                                  ).iloc[:(int(row_lims[1])-int(row_lims[0])), :]
-    else:
-        aula = pd.read_excel(args.maps, usecols=f"{':'.join(cols)}",
-                             index_col=0,  skiprows=int(row_lims[0])-1,
-                            ).iloc[:(int(row_lims[1])-int(row_lims[0])), :]
+    aula = aula.iloc[rows[0]: rows[1], cols[0]: cols[1] + 1].copy()
+    aula = aula.set_index(aula.columns[0])
+
+    slots = (~aula.isna()).sum().sum()
         
+    print(slots, len(matricole))
+
     if len(matricole) < np.nansum(aula.values):
         matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
-        
+    
     aula = aula.rename(columns={c: "" for c in aula.columns if type(c)==str and "Unnamed" in c})
     aula = aula.rename(index = {i: chr(int(i)+64) if i>0 else np.NaN for i in aula.index})
-
-    for i, row in aula.sort_index().iterrows():
-        for j, place in row.iteritems():
-            if not np.isnan(place):
-                curr_matricola = matricole.pop(0)
-                aula.loc[i, snake_j(row, ord(i), j)] = curr_matricola
-                if not curr_matricola == "x":
-                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = a_name, f"{i}{int(snake_j(row, ord(i), j))}"
-    aula.loc[np.NaN] = ""
-    aula[""] = ""
     
-    aula = aula.append(pd.Series(
-        {c:"Cattedra" if c==aula.columns[aula.shape[1]//2] else "" for c in aula.columns}, 
+    #import IPython; IPython.embed(); exit(-1)
+    
+    placement = aula.copy()
+    
+    for i, row in aula.sort_index().iterrows():
+    
+        row = row.astype(float)
+        if not matricole:
+            break
+        
+        for j, place in row.iteritems():
+            
+            if not matricole:
+                break
+                
+            # import IPython; IPython.embed(); exit(-1)
+            if place == 1: # force notation here
+                curr_matricola = matricole.pop(0) 
+                placement.loc[i, j] = str(curr_matricola)
+                
+                if not curr_matricola == "x":
+                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = room_name, f"{i}{snake_j(row, ord(i), j)}"
+
+    placement = placement.fillna("")
+    placement[""] = ""
+    
+    placement = placement.append(pd.Series(
+        {c:"Professor Desk" if c==placement.columns[placement.shape[1]//2] else "" for c in placement.columns}, 
         name=""
     ))
-    return aula, matricole
+    
+    # print(placement)
+    return placement, matricole
 
 
 def styled_seats(x):
@@ -100,39 +132,58 @@ def main(args):
         col = prenotati.xs(row_toskip)
         prenotati = prenotati.drop(range(row_toskip+1))
         prenotati.columns = col
-    
-    
-
         
     prenotati = prenotati.drop(["DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
 
-    #################################
-    # prenotati.loc[[278147, 296962, 292479, 292441, 257793, 292797], "AULA"] = "5T"
-    # matricole = prenotati[(~prenotati.NOTE.str.contains("Esame online", na=False))&(~prenotati.index.isin([278147, 296962, 292479, 292441, 257793, 292797]))].index.to_list()
-    #################################
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
+    
+    if args.excluded_students:
+        ex_students = args.excluded_students.split(",")
+        prenotati.loc[ex_students, "AULA"] = args.multimedia_room
+        matricole = [matricole if matricole not in ex_students]
 
     with open(args.yconfig, "r") as f:
         riferimenti = yaml.load(f, yaml.SafeLoader)
 
-    writer = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
+    writer_d = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
+    writer_p = pd.ExcelWriter(f"{args.name}_prenotati.xlsx")
     
     if not args.rooms:
         args.rooms = list(riferimenti.keys())
+        
+    if len(args.rooms) > 1 and len(set(args.rooms)) == 1:
+        room_names = [f"{i+1}{r}" for i, r in enumerate(args.rooms)]
+    else:
+        room_names = args.rooms
+        
+    print("Room names:", room_names)
     
-    print(f"Posizionamento nelle aule {args.rooms}")
-    for i, a in enumerate(args.rooms):
-        sheet_name, window = riferimenti.get(a).values()
-        aula, matricole = stamp_id(a, sheet_name, window, matricole, prenotati)
+    for i, (a, room_name) in enumerate(zip(args.rooms, room_names)):
+        config = riferimenti.get(a)
+        if "position" not in config:
+            raise RuntimeError("Specify a position window in YAML reference file!")
         
-        aula.style.apply(styled_seats, axis=None).to_excel(writer, sheet_name=f"Aula {a}")
+        aula, matricole = stamp_id(room_name, config, matricole, prenotati)
+        
+        if args.style:
+            aula = aula.style.apply(styled_seats, axis=None)
+        
+        aula.to_excel(writer_d, sheet_name=f"Aula_{room_name}")
+        prenotati[prenotati.AULA == room_name].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
 
-    if len(matricole) != 0:
-        print(f"⚠️  Aule indicate non sufficienti, rimangono {len(matricole)} studenti ({matricole})")
+    # remove placeholders "x"
+    # matricole = [m for m in matricole if m != "x"]
+    assert len(matricole) == 0, f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})"
+
+    if args.excluded_students:
+        prenotati[prenotati.AULA == args.multimedia_room].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
         
-    prenotati.to_excel(f"{args.name}_prenotati.xlsx")
-    writer.save()
+    if len(room_names) > 1 or args.excluded_students:
+        prenotati.to_excel(writer_p, sheet_name=f"Elenco Complessivo")
+        
+    writer_d.save()
+    writer_p.save()
     
     
     
