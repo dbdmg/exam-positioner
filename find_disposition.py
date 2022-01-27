@@ -83,10 +83,11 @@ def stamp_id(room_name, config, matricole, prenotati):
             # import IPython; IPython.embed(); exit(-1)
             if place == 1: # force notation here
                 curr_matricola = matricole.pop(0) 
-                placement.loc[i, j] = str(curr_matricola)
+                sn_j = snake_j(row, ord(i), j) 
+                placement.loc[i, sn_j] = str(curr_matricola)
                 
                 if not curr_matricola == "x":
-                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = room_name, f"{i}{snake_j(row, ord(i), j)}"
+                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = room_name, f"{i}{int(sn_j)}"
 
     placement = placement.fillna("")
     placement[""] = ""
@@ -121,20 +122,28 @@ def main(args):
     if args.students.is_dir():
         prenotati = pd.DataFrame()
         for p in args.students.glob("Lista_Prenotati_*"):
-            tmp = pd.read_excel(p)
-            row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
-            col = tmp.xs(row_toskip)
-            tmp = tmp.drop(range(row_toskip+1))
-            tmp.columns = col
+            if p.suffix == "xlsx": 
+                tmp = pd.read_excel(p) 
+                row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
+                col = tmp.xs(row_toskip)
+                tmp = tmp.drop(range(row_toskip+1))
+                tmp.columns = col
+            else:
+                tmp = pd.read_csv(p)
             prenotati = prenotati.append(tmp)
         prenotati = prenotati
     else:
-        prenotati = pd.read_excel(args.students)
-        row_toskip = (prenotati.iloc[:,0]=="MATRICOLA").argmax()
-        col = prenotati.xs(row_toskip)
-        prenotati = prenotati.drop(range(row_toskip+1))
-        prenotati.columns = col
+        if args.students.suffix == "xlsx": 
+            prenotati = pd.read_excel(args.students) 
+            row_toskip = (prenotati.iloc[:,0]=="MATRICOLA").argmax()
+
+            col = prenotati.xs(row_toskip)
+            prenotati = prenotati.drop(range(row_toskip+1))
+            prenotati.columns = col
+        else:
+            prenotati = pd.read_csv(args.students)
         
+    prenotati.columns = [c.strip() for c in prenotati.columns]
     prenotati = prenotati.drop(["DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
 
@@ -151,6 +160,7 @@ def main(args):
     writer_d = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
     writer_p = pd.ExcelWriter(f"{args.name}_prenotati.xlsx")
     
+    args.rooms = [r.upper() for r in args.rooms]
     if not args.rooms:
         args.rooms = list(riferimenti.keys())
         
@@ -184,6 +194,13 @@ def main(args):
     if len(room_names) > 1 or args.excluded_students:
         prenotati.to_excel(writer_p, sheet_name=f"Elenco Complessivo")
         
+    with open(f"{args.name}_limiti.txt", "w") as f:
+        limiti = prenotati[prenotati.AULA != args.multimedia_room].groupby("AULA").agg({
+                "COGNOME": ["min", "max"]
+            })
+        f.write(str(limiti))
+        print("✔️  Students succesfully allocated\n", str(limiti))
+
     writer_d.save()
     writer_p.save()
     
