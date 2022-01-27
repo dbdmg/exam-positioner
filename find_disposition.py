@@ -199,7 +199,7 @@ def main(args):
                 "COGNOME": ["min", "max"]
             })
         f.write(str(limiti))
-        print("✔️  Students succesfully allocated\n", str(limiti))
+        print("\n✔️  Students succesfully allocated\n", str(limiti))
 
     writer_d.save()
     writer_p.save()
