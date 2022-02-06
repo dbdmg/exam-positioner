@@ -14,6 +14,7 @@ def get_args():
     parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
     parser.add_argument('--excluded_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
     parser.add_argument('--multimedia_room', type=str, default="5T", help="Aula multimediale nella quale inserire excluded_students. Default è '5T'.")
+    parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Nome dei files di output. Default: '<COD>_yyyymmdd'.")
     parser.add_argument("--style", action="store_true", help="Add style to the resulting sheet.")
@@ -56,6 +57,7 @@ def stamp_id(room_name, config, matricole, prenotati):
     aula = aula.set_index(aula.columns[0]).rename_axis(None)
     aula.columns = col_names
 
+    aula = aula.applymap(lambda x: np.NaN if x==0 else x)
     slots = (~aula.isna()).sum().sum()
         
     print(f"| Room {room_name} | Slots: {slots}, remaining students: {len(matricole)}")
@@ -131,7 +133,6 @@ def main(args):
             else:
                 tmp = pd.read_csv(p)
             prenotati = prenotati.append(tmp)
-        prenotati = prenotati
     else:
         if args.students.suffix == "xlsx": 
             prenotati = pd.read_excel(args.students) 
@@ -148,6 +149,11 @@ def main(args):
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
 
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
+
+    if args.dsa_room is not None:
+        matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)].index.to_list()
+        print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
+        matricole = [m for m in matricole if m not in matricole_dsa]
     
     if args.excluded_students:
         ex_students = [int(m) for m in args.excluded_students.split(",")]
@@ -176,6 +182,9 @@ def main(args):
         if "position" not in config:
             raise RuntimeError("Specify a position window in YAML reference file!")
         
+        if args.dsa_room is not None and room_name==args.dsa_room:
+            print(f"Placing dsa students in {room_name}")
+            matricole = matricole_dsa + matricole
         aula, matricole = stamp_id(room_name, config, matricole, prenotati)
         
         if args.style:
