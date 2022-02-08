@@ -121,10 +121,13 @@ def styled_seats(x):
 
 
 def main(args):
+    with open(args.yconfig, "r") as f:
+        riferimenti = yaml.load(f, yaml.SafeLoader)
+
     if args.students.is_dir():
         prenotati = pd.DataFrame()
         for p in args.students.glob("Lista_Prenotati_*"):
-            if p.suffix == "xlsx": 
+            if p.suffix == ".xlsx": 
                 tmp = pd.read_excel(p) 
                 row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
                 col = tmp.xs(row_toskip)
@@ -155,13 +158,15 @@ def main(args):
         print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
         matricole = [m for m in matricole if m not in matricole_dsa]
     
+    if "excluded_students" in riferimenti.keys():
+        args.excluded_students = riferimenti.pop("excluded_students")
     if args.excluded_students:
         ex_students = [int(m) for m in args.excluded_students.split(",")]
         prenotati.loc[ex_students, "AULA"] = args.multimedia_room
         matricole = [m for m in matricole if m not in ex_students]
+        print(f"These students will be placed in {args.multimedia_room}:")
+        print(ex_students, "\n")
 
-    with open(args.yconfig, "r") as f:
-        riferimenti = yaml.load(f, yaml.SafeLoader)
 
     writer_d = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
     writer_p = pd.ExcelWriter(f"{args.name}_prenotati.xlsx")
