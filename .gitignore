@@ -132,8 +132,8 @@ dmypy.json
 
 # Data directories
 dataset/
-excels/
-SEA\ Data\ Lake/
-*.sbatch
 *.zip
-*.png
+*.xlsx
+*.txt
+tania*
+luca*

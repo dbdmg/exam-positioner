@@ -147,6 +147,8 @@ def main(args):
         else:
             prenotati = pd.read_csv(args.students)
         
+    prenotati = prenotati.drop_duplicates()
+
     prenotati.columns = [c.strip() for c in prenotati.columns]
     prenotati = prenotati.drop(["DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
