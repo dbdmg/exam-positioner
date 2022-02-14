@@ -12,12 +12,13 @@ def get_args():
     parser = argparse.ArgumentParser(description=f"Crea la distribuzione dei posti in un'aula a partire dall'elenco degli studenti e dalla matrice dei posti disponibili.\n IMPORTANTE: le aule devono essere rappresentate con la cattedra in basso, le file numerate in maniera crescente, lasciando uno spazio nel caso in cui non sia presenta una fila.")
     parser.add_argument('rooms', nargs='*', type=str, help="La lista delle aule nelle quali dividere gli studenti.")
     parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
-    parser.add_argument('--excluded_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
-    parser.add_argument('--multimedia_room', type=str, default="5T", help="Aula multimediale nella quale inserire excluded_students. Default è '5T'.")
+    parser.add_argument('--nopc_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
+    parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
     parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Nome dei files di output. Default: '<COD>_yyyymmdd'.")
     parser.add_argument("--style", action="store_true", help="Add style to the resulting sheet.")
+    parser.add_argument("--prompt", action="store_true", help="Manual insert each parameter.")
     args = parser.parse_args()
     return args
 
@@ -60,7 +61,7 @@ def stamp_id(room_name, config, matricole, prenotati):
     aula = aula.applymap(lambda x: np.NaN if x==0 else x)
     slots = (~aula.isna()).sum().sum()
         
-    print(f"| Room {room_name} | Slots: {slots}, remaining students: {len(matricole)}")
+    print(f"| Room {room_name.ljust(3)} | Slots: {slots}, remaining students: {len(matricole)}")
 
     if len(matricole) < np.nansum(aula.values):
         matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
@@ -121,6 +122,17 @@ def styled_seats(x):
 
 
 def main(args):
+
+    if args.prompt:
+        for k in vars(args):
+            if k == 'prompt': continue
+            tmp = input(f"Insert value for {k} (Default is {getattr(args, k)}):")
+            if tmp != '':
+                if type(getattr(args, k)) == type(Path()): tmp = Path(tmp)
+                if k == "rooms": tmp = re.split(r",\s*", tmp)
+                setattr(args, k, tmp)
+
+
     with open(args.yconfig, "r") as f:
         riferimenti = yaml.load(f, yaml.SafeLoader)
 
@@ -160,13 +172,13 @@ def main(args):
         print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
         matricole = [m for m in matricole if m not in matricole_dsa]
     
-    if "excluded_students" in riferimenti.keys():
-        args.excluded_students = riferimenti.pop("excluded_students")
-    if args.excluded_students:
-        ex_students = [int(m) for m in args.excluded_students.split(",")]
-        prenotati.loc[ex_students, "AULA"] = args.multimedia_room
+    if "nopc_students" in riferimenti.keys():
+        args.nopc_students = riferimenti.pop("nopc_students")
+    if args.nopc_students:
+        ex_students = [int(m) for m in args.nopc_students.split(",")]
+        prenotati.loc[ex_students, "AULA"] = args.nopc_room
         matricole = [m for m in matricole if m not in ex_students]
-        print(f"These students will be placed in {args.multimedia_room}:")
+        print(f"These students will be placed in {args.nopc_room}:")
         print(ex_students, "\n")
 
 
@@ -202,16 +214,17 @@ def main(args):
 
     # remove placeholders "x"
     # matricole = [m for m in matricole if m != "x"]
-    assert len(matricole) == 0, f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})"
+    if len(matricole) != 0:
+        raise ValueError(f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})")
 
-    if args.excluded_students:
-        prenotati[prenotati.AULA == args.multimedia_room].to_excel(writer_p, sheet_name=f"Aula_{args.multimedia_room}")
+    if args.nopc_students:
+        prenotati[prenotati.AULA == args.nopc_room].to_excel(writer_p, sheet_name=f"Aula_{args.nopc_room}")
         
-    if len(room_names) > 1 or args.excluded_students:
+    if len(room_names) > 1 or args.nopc_students:
         prenotati.to_excel(writer_p, sheet_name=f"Elenco Complessivo")
         
     with open(f"{args.name}_limiti.txt", "w") as f:
-        limiti = prenotati[prenotati.AULA != args.multimedia_room].groupby("AULA").agg({
+        limiti = prenotati[prenotati.AULA != args.nopc_room].groupby("AULA").agg({
                 "COGNOME": ["min", "max"]
             })
         f.write(str(limiti))
