@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from ast import arg
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -11,12 +12,13 @@ import yaml
 def get_args():
     parser = argparse.ArgumentParser(description=f"Crea la distribuzione dei posti in un'aula a partire dall'elenco degli studenti e dalla matrice dei posti disponibili.\n IMPORTANTE: le aule devono essere rappresentate con la cattedra in basso, le file numerate in maniera crescente, lasciando uno spazio nel caso in cui non sia presenta una fila.")
     parser.add_argument('rooms', nargs='*', type=str, help="La lista delle aule nelle quali dividere gli studenti.")
+    parser.add_argument('-f', '--folder', type=Path, default=None, help="Percorso nel quale ricercare elenco studenti, file di configurazione e eventualmente excel con disposizioni, il nome del file finale avrà il nome della cartella come prefisso.")
     parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
     parser.add_argument('--nopc_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
     parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
-    parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Nome dei files di output. Default: '<COD>_yyyymmdd'.")
+    parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
     parser.add_argument("--style", action="store_true", help="Add style to the resulting sheet.")
     parser.add_argument("--prompt", action="store_true", help="Manual insert each parameter.")
     args = parser.parse_args()
@@ -95,10 +97,9 @@ def stamp_id(room_name, config, matricole, prenotati):
     placement = placement.fillna("")
     placement[""] = ""
     
-    placement = placement.append(pd.Series(
+    placement = pd.concat([placement,pd.Series(
         {c:"Professor Desk" if c==placement.columns[placement.shape[1]//2] else "" for c in placement.columns}, 
-        name=""
-    ))
+        name="")], ignore_index=True)
     
     # print(placement)
     return placement, matricole
@@ -132,13 +133,18 @@ def main(args):
                 if k == "rooms": tmp = re.split(r",\s*", tmp)
                 setattr(args, k, tmp)
 
+    if args.folder:
+        args.yconfig = args.folder / "riferimenti_aule.yaml"
+        args.name = args.folder / args.folder.stem
+        
 
     with open(args.yconfig, "r") as f:
         riferimenti = yaml.load(f, yaml.SafeLoader)
+        riferimenti = {str(k): v for k, v in riferimenti.items()}
 
-    if args.students.is_dir():
+    if args.folder:
         prenotati = pd.DataFrame()
-        for p in args.students.glob("Lista_Prenotati_*"):
+        for p in args.folder.glob("Lista_Prenotati_*"):
             if p.suffix == ".xlsx": 
                 tmp = pd.read_excel(p) 
                 row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
@@ -147,7 +153,7 @@ def main(args):
                 tmp.columns = col
             else:
                 tmp = pd.read_csv(p)
-            prenotati = prenotati.append(tmp)
+            prenotati = pd.concat([prenotati,tmp], ignore_index=True)
     else:
         if args.students.suffix == "xlsx": 
             prenotati = pd.read_excel(args.students) 
@@ -159,10 +165,12 @@ def main(args):
         else:
             prenotati = pd.read_csv(args.students)
         
+    plen = len(prenotati)
     prenotati = prenotati.drop_duplicates()
+    if plen != len(prenotati): print("Attenzione: studenti duplicati nella tabella\n")
 
     prenotati.columns = [c.strip() for c in prenotati.columns]
-    prenotati = prenotati.drop(["DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
+    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
 
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
@@ -200,6 +208,8 @@ def main(args):
         config = riferimenti.get(a)
         if "position" not in config:
             raise RuntimeError("Specify a position window in YAML reference file!")
+        if "filename" not in config and args.folder:
+            config["filename"] = str(args.folder / "Aule esami.xlsx")
         
         if args.dsa_room is not None and room_name==args.dsa_room:
             print(f"Placing dsa students in {room_name}")

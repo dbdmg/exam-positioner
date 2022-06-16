@@ -1,52 +1,10 @@
-R1:
-  sheet: "Aule R"
-  position: "B2:U20"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-
-R2:
-  sheet: "Aule R"
-  position: "B2:U20"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-  
-R3:
-  sheet: "Aule R"
-  position: "B2:U20"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-
-R4:
-  sheet: "Aule R"
-  position: "B2:U20"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-  
-R1B:
-  sheet: "Aule R"
-  position: "B28:Q38"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-
-R2B:
-  sheet: "Aule R"
-  position: "B28:Q38"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-  
-R3B:
-  sheet: "Aule R"
-  position: "B28:Q38"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-
-R4B:
-  sheet: "Aule R"
-  position: "B28:Q38"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-
-P_sits_38:
-  sheet: "Aule P"
-  position: "B4:R19"
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-  capacity: 38
-  
-P:
-  sheet: "Aule P"
-  position: "B25:R40"
-  capacity: 46
-  filename: "Aule esami Polito, disposizione posti.xlsx"
-  filename: "Aule_P.tsv"
+nopc_students: 270874,287076
+2:
+  sheet: "Aule Pari"
+  position: "B3:Y19"
+4:
+  sheet: "Aule Pari"
+  position: "B29:Y45"
+6:
+  sheet: "Aule Pari"
+  position: "B55:W71"
