@@ -70,9 +70,7 @@ def stamp_id(room_name, config, matricole, prenotati):
     
     aula = aula.rename(columns={c: "" for c in aula.columns if type(c)==str and "Unnamed" in c})
     aula = aula.rename(index = {i: chr(int(i)+64) if i>0 else np.NaN for i in aula.index})
-    
-    #import IPython; IPython.embed(); exit(-1)
-    
+        
     placement = aula.copy()
     
     for i, row in aula.sort_index().iterrows():
@@ -85,7 +83,6 @@ def stamp_id(room_name, config, matricole, prenotati):
             if not matricole:
                 break
                 
-            # import IPython; IPython.embed(); exit(-1)
             if place == 1: # force notation here
                 curr_matricola = matricole.pop(0) 
                 sn_j = snake_j(row, ord(i), j) 
@@ -97,11 +94,13 @@ def stamp_id(room_name, config, matricole, prenotati):
     placement = placement.fillna("")
     placement[""] = ""
     
-    placement = pd.concat([placement,pd.Series(
+    placement.loc[""] = pd.Series(
         {c:"Professor Desk" if c==placement.columns[placement.shape[1]//2] else "" for c in placement.columns}, 
-        name="")], ignore_index=True)
+        )
     
     # print(placement)
+
+    
     return placement, matricole
 
 
@@ -172,11 +171,13 @@ def main(args):
     prenotati.columns = [c.strip() for c in prenotati.columns]
     prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
-
+    
+    # prenotati.NOTE = prenotati.NOTE.astype('str')
+    if not prenotati.NOTE.dtype == 'object': prenotati.NOTE = ""
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
 
     if args.dsa_room is not None:
-        matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)].index.to_list()
+        matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)|prenotati.NOTE.str.contains("Tempo aggiuntivo", na=False)].index.to_list()
         print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
         matricole = [m for m in matricole if m not in matricole_dsa]
     
@@ -219,6 +220,7 @@ def main(args):
         if args.style:
             aula = aula.style.apply(styled_seats, axis=None)
         
+        # aula.columns = a
         aula.to_excel(writer_d, sheet_name=f"Aula_{room_name}")
         prenotati[prenotati.AULA == room_name].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
 
