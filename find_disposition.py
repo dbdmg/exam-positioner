@@ -205,6 +205,7 @@ def main(args):
         
     print("Room names:", room_names, "\n")
     
+    prenotati = prenotati.drop(["CORSO", "CDL"], axis=1)
     for i, (a, room_name) in enumerate(zip(args.rooms, room_names)):
         config = riferimenti.get(a)
         if "position" not in config:
@@ -222,6 +223,7 @@ def main(args):
         
         # aula.columns = a
         aula.to_excel(writer_d, sheet_name=f"Aula_{room_name}")
+
         prenotati[prenotati.AULA == room_name].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
 
     # remove placeholders "x"
