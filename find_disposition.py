@@ -79,7 +79,7 @@ def stamp_id(room_name, config, matricole, prenotati):
         if not matricole:
             break
         
-        for j, place in row.iteritems():
+        for j, place in row.items():
             if not matricole:
                 break
                 
@@ -107,7 +107,7 @@ def stamp_id(room_name, config, matricole, prenotati):
 def styled_seats(x):
     checkerboard = lambda d: np.row_stack(d[0]*(np.r_[d[1]*[True,False]], np.r_[d[1]*[False,True]]))[:d[0], :d[1]]
     if np.NaN in x.index: x.loc[np.NaN, :] = np.NaN
-    if np.NaN in x.columns: x.loc[:, np.NaN] = np.NaN
+    if np.NaN in x.columns: x[[np.NaN]] = np.NaN
     df1 = pd.DataFrame(np.where(x.notna()&checkerboard(x.shape), 
                                 'background-color: lightgrey;\
                                 width: 50px;\
@@ -143,7 +143,7 @@ def main(args):
 
     if args.folder:
         prenotati = pd.DataFrame()
-        for p in args.folder.glob("Lista_Prenotati_*"):
+        for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
             if p.suffix == ".xlsx": 
                 tmp = pd.read_excel(p) 
                 row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
@@ -169,7 +169,7 @@ def main(args):
     if plen != len(prenotati): print("Attenzione: studenti duplicati nella tabella\n")
 
     prenotati.columns = [c.strip() for c in prenotati.columns]
-    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
+    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
     
     # prenotati.NOTE = prenotati.NOTE.astype('str')
@@ -205,7 +205,6 @@ def main(args):
         
     print("Room names:", room_names, "\n")
     
-    prenotati = prenotati.drop(["CORSO", "CDL"], axis=1)
     for i, (a, room_name) in enumerate(zip(args.rooms, room_names)):
         config = riferimenti.get(a)
         if "position" not in config:
@@ -244,8 +243,8 @@ def main(args):
         f.write(str(limiti))
         print("\n✔️  Students succesfully allocated\n", str(limiti))
 
-    writer_d.save()
-    writer_p.save()
+    writer_d.close()
+    writer_p.close()
     
     
     
