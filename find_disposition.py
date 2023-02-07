@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from ast import arg
+# from ast import arg
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -11,16 +11,12 @@ import yaml
 
 def get_args():
     parser = argparse.ArgumentParser(description=f"Crea la distribuzione dei posti in un'aula a partire dall'elenco degli studenti e dalla matrice dei posti disponibili.\n IMPORTANTE: le aule devono essere rappresentate con la cattedra in basso, le file numerate in maniera crescente, lasciando uno spazio nel caso in cui non sia presenta una fila.")
-    parser.add_argument('rooms', nargs='*', type=str, help="La lista delle aule nelle quali dividere gli studenti.")
     parser.add_argument('-f', '--folder', type=Path, default=None, help="Percorso nel quale ricercare elenco studenti, file di configurazione e eventualmente excel con disposizioni, il nome del file finale avrà il nome della cartella come prefisso.")
-    parser.add_argument('-s', '--students', type=Path, default=Path.cwd(), help="Percorso del file Excel contenente l'elenco degli studenti prenotati.")
     parser.add_argument('--nopc_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
     parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
-    parser.add_argument('-y', '--yconfig', type=Path, default="riferimenti_aule.yaml", help="File con le posizioni delle tabelle all'interno di 'args.maps'.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
-    parser.add_argument("--style", action="store_true", help="Add style to the resulting sheet.")
-    parser.add_argument("--prompt", action="store_true", help="Manual insert each parameter.")
+    parser.add_argument("--nostyle", action="store_true", help="Prevent adding style to the resulting sheet.")
     args = parser.parse_args()
     return args
 
@@ -40,9 +36,9 @@ def stamp_id(room_name, config, matricole, prenotati):
 
     cols = [ord(a.lower())-97 for a in cols]
     if "filename" in config:
-        if config["filename"].endswith(".csv"):
+        if config["filename"].name.endswith(".csv"):
             aula = pd.read_csv(config["filename"], sep="\t", header=None)
-        elif config["filename"].endswith(".xlsx"):
+        elif config["filename"].name.endswith(".xlsx"):
             aula = pd.read_excel(config["filename"], sheet_name=config["sheet"], header=None)
         
     else: # retrieve from Google's API
@@ -97,10 +93,6 @@ def stamp_id(room_name, config, matricole, prenotati):
     placement.loc[""] = pd.Series(
         {c:"Professor Desk" if c==placement.columns[placement.shape[1]//2] else "" for c in placement.columns}, 
         )
-    
-    # print(placement)
-
-    
     return placement, matricole
 
 
@@ -122,47 +114,24 @@ def styled_seats(x):
 
 
 def main(args):
-
-    if args.prompt:
-        for k in vars(args):
-            if k == 'prompt': continue
-            tmp = input(f"Insert value for {k} (Default is {getattr(args, k)}):")
-            if tmp != '':
-                if type(getattr(args, k)) == type(Path()): tmp = Path(tmp)
-                if k == "rooms": tmp = re.split(r",\s*", tmp)
-                setattr(args, k, tmp)
-
-    if args.folder:
-        args.yconfig = args.folder / "riferimenti_aule.yaml"
-        args.name = args.folder / args.folder.stem
-        
+    args.yconfig = args.folder / "riferimenti_aule.yaml"
+    args.name = args.folder / args.folder.stem        
 
     with open(args.yconfig, "r") as f:
         riferimenti = yaml.load(f, yaml.SafeLoader)
         riferimenti = {str(k): v for k, v in riferimenti.items()}
 
-    if args.folder:
-        prenotati = pd.DataFrame()
-        for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
-            if p.suffix == ".xlsx": 
-                tmp = pd.read_excel(p) 
-                row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
-                col = tmp.xs(row_toskip)
-                tmp = tmp.drop(range(row_toskip+1))
-                tmp.columns = col
-            else:
-                tmp = pd.read_csv(p)
-            prenotati = pd.concat([prenotati,tmp], ignore_index=True)
-    else:
-        if args.students.suffix == "xlsx": 
-            prenotati = pd.read_excel(args.students) 
-            row_toskip = (prenotati.iloc[:,0]=="MATRICOLA").argmax()
-
-            col = prenotati.xs(row_toskip)
-            prenotati = prenotati.drop(range(row_toskip+1))
-            prenotati.columns = col
+    prenotati = pd.DataFrame()
+    for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
+        if p.suffix == ".xlsx": 
+            tmp = pd.read_excel(p) 
+            row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
+            col = tmp.xs(row_toskip)
+            tmp = tmp.drop(range(row_toskip+1))
+            tmp.columns = col
         else:
-            prenotati = pd.read_csv(args.students)
+            tmp = pd.read_csv(p)
+        prenotati = pd.concat([prenotati,tmp], ignore_index=True)
         
     plen = len(prenotati)
     prenotati = prenotati.drop_duplicates()
@@ -190,7 +159,6 @@ def main(args):
         print(f"These students will be placed in {args.nopc_room}:")
         print(ex_students, "\n")
 
-
     writer_d = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
     writer_p = pd.ExcelWriter(f"{args.name}_prenotati.xlsx")
     
@@ -210,14 +178,15 @@ def main(args):
         if "position" not in config:
             raise RuntimeError("Specify a position window in YAML reference file!")
         if "filename" not in config and args.folder:
-            config["filename"] = str(args.folder / "Aule esami.xlsx")
+            config["filename"] = args.folder / "Aule esami.xlsx"
+            if not config["filename"].exists(): config["filename"] = Path.cwd() / "Aule esami Polito, disposizione posti.xlsx"
         
         if args.dsa_room is not None and room_name==args.dsa_room:
             print(f"Placing dsa students in {room_name}")
             matricole = matricole_dsa + matricole
         aula, matricole = stamp_id(room_name, config, matricole, prenotati)
         
-        if args.style:
+        if not args.nostyle:
             aula = aula.style.apply(styled_seats, axis=None)
         
         # aula.columns = a
@@ -245,8 +214,7 @@ def main(args):
 
     writer_d.close()
     writer_p.close()
-    
-    
+        
     
 if __name__ == '__main__':
     args = get_args()
