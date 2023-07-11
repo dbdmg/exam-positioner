@@ -165,32 +165,6 @@ def stamp_id(room_name, config, matricole, prenotati):
     return placement, matricole
 
 
-def styled_seats(x):
-    checkerboard = lambda d: np.row_stack(
-        d[0] * (np.r_[d[1] * [True, False]], np.r_[d[1] * [False, True]])
-    )[: d[0], : d[1]]
-    if np.NaN in x.index:
-        x.loc[np.NaN, :] = np.NaN
-    if np.NaN in x.columns:
-        x[[np.NaN]] = np.NaN
-    df1 = pd.DataFrame(
-        np.where(
-            x.notna() & checkerboard(x.shape),
-            "background-color: lightgrey;\
-                                width: 50px;\
-                                text-align: center",
-            "width: 50px;\
-                                text-align: center",
-        ),
-        index=x.index,
-        columns=x.columns,
-    )
-    df1.iloc[-1] = x.iloc[-1].apply(
-        lambda x: "" if x == "" else "background-color: lightgrey; text-align: center"
-    )
-    return df1
-
-
 def main():
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     args = get_args()
@@ -280,8 +254,6 @@ def main():
             prenotation_file, worksheet=f"Aula_{r}"
         )
 
-    # remove placeholders "x"
-    # matricole = [m for m in matricole if m != "x"]
     if matricole.shape[0] != 0:
         raise ValueError(
             f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing)"
