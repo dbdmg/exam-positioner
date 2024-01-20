@@ -4,12 +4,15 @@
 import argparse
 import logging
 import re
+from itertools import product
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import polars as pl
 import yaml
+from xlsxwriter import Workbook
 
 
 def get_args():
@@ -20,7 +23,7 @@ def get_args():
         "-f",
         "--folder",
         type=Path,
-        default=None,
+        default="test",
         help="Percorso nel quale ricercare elenco studenti, file di configurazione e eventualmente excel con disposizioni, il nome del file finale avrà il nome della cartella come prefisso.",
     )
     parser.add_argument(
@@ -65,115 +68,51 @@ def get_args():
     return args
 
 
-def snake_j(row, i, j):
-    rev_j = row.index[len(row) - row.index.get_loc(j) - 1]
-    if i % 4 == 2 and not np.isnan(row[rev_j]):
-        return rev_j
-    return j
+def place_student(
+    room_dict: Dict[str, np.ndarray], student_id: int, room_name: Optional[str] = None
+) -> Tuple[int, int]:
+    if room_name is None:
+        room_name = [k for k, m in room_dict.items() if (m == 1).sum() > 0][0]
+    room_matrix = room_dict[room_name]
+    # Find first available sit
+    r, c = np.where(room_matrix == 1)
+    if len(r) == 0:
+        raise ValueError("No more sits available")
+    room_matrix[r[0], c[0]] = student_id
+    return {"room": room_name, "row": r[0], "col": c[0]}
 
 
-def stamp_id(room_name, config, matricole, prenotati):
-    window = config["position"]
-
-    rows = list(map(int, re.findall(r"\d+", window)))
-    cols = re.findall(r"[a-zA-Z]", window)
-
-    cols = [ord(a.lower()) - 97 for a in cols]
-    if "filename" in config:
-        if config["filename"].name.endswith(".csv"):
-            aula = pd.read_csv(config["filename"], sep="\t", header=None)
-        elif config["filename"].name.endswith(".xlsx"):
-            aula = pd.read_excel(
-                config["filename"], sheet_name=config["sheet"], header=None
-            )
-
-    else:  # retrieve from Google's API
-        # this might return a wrong CSV, beware
-        sheet_id = "1yuDN40n8pcoP2FgjUwuR6oxKvNRSa2jbJTVhOrsB5_A"
-        sheet_name = config["sheet"].replace(" ", "%20")
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-        aula = pd.read_csv(url, header=None)
-
-    col_names = aula.loc[rows[0] - 1, cols[0] + 1 : cols[1]]
-    aula = aula.iloc[rows[0] : rows[1], cols[0] : cols[1] + 1].copy()
-
-    row_names = aula.columns[0]
-    # Flip vertically and horizontally
-    if config["rotate"]:
-        aula = aula.iloc[::-1]
-        aula = aula.iloc[:, ::-1]
-
-    aula = aula.set_index(row_names).rename_axis(None)
-    aula.columns = col_names
-
-    # Invert index
-    if config["rotate"]:
-        aula.index = aula.index[::-1]
-
-    aula = aula.rename_axis(None, axis=1)
-
-    aula = aula.applymap(lambda x: np.NaN if x == 0 else x)
-    slots = (~aula.isna()).sum().sum()
-
-    print(
-        f"| Room {room_name.ljust(3)} | Slots: {slots}, remaining students: {len(matricole)}"
-    )
-
-    if len(matricole) < np.nansum(aula.values):
-        matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
-
-    aula = aula.rename(
-        columns={c: "" for c in aula.columns if type(c) == str and "Unnamed" in c}
-    )
-    aula = aula.rename(
-        index={i: chr(int(i) + 64) if i > 0 else np.NaN for i in aula.index}
-    )
-
-    placement = aula.copy()
-
-    for i, row in aula.sort_index().iterrows():
-        row = row.astype(float)
-        if not matricole:
-            break
-
-        for j, place in row.items():
-            if not matricole:
-                break
-
-            if place == 1:  # force notation here
-                curr_matricola = matricole.pop(0)
-                sn_j = snake_j(row, ord(i), j)
-                placement.loc[i, sn_j] = str(curr_matricola)
-
-                if not curr_matricola == "x":
-                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = (
-                        room_name,
-                        f"{i}{int(sn_j)}",
-                    )
-
-    placement = placement.fillna("")
-    placement[""] = ""
-
-    placement.loc[""] = pd.Series(
-        {
-            c: "Professor Desk"
-            if c == placement.columns[placement.shape[1] // 2]
-            else ""
-            for c in placement.columns
-        },
-    )
-    return placement, matricole
+def build_room_matrix(config: Dict[str, Any]) -> np.ndarray:
+    matrix = np.zeros((config["size"]["rows"], config["size"]["cols"]), dtype=np.int64)
+    for r, c in product(config["sits"]["rows"], config["sits"]["cols"]):
+        matrix[r, c] = 1
+    # Banned areas
+    for range in config["banned_sits"]:
+        start = list(map(int, range["start"].split(":")))
+        end = list(map(int, range["end"].split(":")))
+        banned_range = (*start, *end)
+        matrix[
+            banned_range[0] : banned_range[2] + 1, banned_range[1] : banned_range[3] + 1
+        ] = -1
+    # Desk
+    start = list(map(int, config["desk"]["start"].split(":")))
+    end = list(map(int, config["desk"]["end"].split(":")))
+    matrix[start[0] : end[0] + 1, start[1] : end[1] + 1] = -2
+    return matrix
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     args = get_args()
-    config = args.folder / "riferimenti_aule.yaml"
     name = args.folder / args.folder.stem
-    all_assignations = []
 
-    with open(config, "r") as f:
-        riferimenti = yaml.safe_load(f)
+    with open(args.folder / "config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+    rooms = {}
+    for r in config["rooms"]:
+        with open(f"room_formats/{r}.yaml", "r") as f:
+            rooms[r] = build_room_matrix(yaml.safe_load(f))
 
     prenotati = pl.scan_csv(args.folder / "VISAP_Elenco_Studenti_*").collect()
 
@@ -181,19 +120,14 @@ def main():
         logging.warning("Attenzione: studenti duplicati nella tabella\n")
         prenotati = prenotati.unique()
 
-    prenotati = (
-        prenotati.select("MATRICOLA", "COGNOME", "NOME", "DOCENTE", "NOTE")
-        .sort("COGNOME")
-        .with_columns(
-            pl.lit(None, dtype=pl.Utf8).alias("AULA"),
-            pl.lit(None, dtype=pl.Utf8).alias("POSTO"),
-        )
-    )
+    prenotati = prenotati.select(
+        "MATRICOLA", "COGNOME", "NOME", "DOCENTE", "NOTE"
+    ).sort("COGNOME")
     # DSA students
     dsa = prenotati.filter(
         pl.col("NOTE").str.contains("Dsa")
         | pl.col("NOTE").str.contains("Tempo aggiuntivo")
-    ).select("MATRICOLA")
+    ).get_column("MATRICOLA")
 
     if dsa.shape[0] > 0:
         logging.info(
@@ -202,72 +136,58 @@ def main():
     # Not online students
     on_site = (
         prenotati.filter(
-            pl.col("NOTE").str.contains("Esame online").is_not()
+            pl.col("NOTE").str.contains("Esame online").not_()
             | pl.col("NOTE").is_null()
         )
-        .select("MATRICOLA")
-        .filter(pl.col("MATRICOLA").is_in(dsa).is_not())
+        .filter(pl.col("MATRICOLA").is_in(dsa).not_())
+        .get_column("MATRICOLA")
     )
     # No PC students
-    nopc = None
-    if "nopc_students" in riferimenti.keys():
-        on_site = on_site.filter(
-            pl.col("MATRICOLA").is_in(riferimenti["nopc_students"]).is_not()
-        )
-        nopc = prenotati.filter(
-            pl.col("MATRICOLA").is_in(riferimenti["nopc_students"])
-        ).with_columns(
-            pl.lit(args.nopc_room, dtype=pl.Utf8).alias("AULA"),
-        )
-        all_assignations.append(nopc)
+    nopc = pl.Series()
+    if "nopc_students" in config.keys():
+        nopc = on_site.filter(on_site.is_in(config["nopc_students"]))
+        on_site = on_site.filter(on_site.is_in(config["nopc_students"]).not_())
         logging.info(f"{nopc.shape[0]} students will be placed in {args.nopc_room}:")
 
-    # Get all rooms
-    rooms = args.rooms or [r for r in riferimenti if r != "nopc_students"]
-    rooms = list(map(str.upper, rooms))
-    logging.info(f"Rooms: {rooms}")
-
-    """Duplicate rooms if needed
-    if len(args.rooms) > 1 and len(set(args.rooms)) == 1:
-        room_names = [f"{i+1}{r}" for i, r in enumerate(args.rooms)]
-    else:
-        room_names = args.rooms
-    """
     prenotation_file = f"{name}_prenotati.xlsx"
     disposition_file = f"{name}_disposizioni.xlsx"
-    for r in rooms:
-        config = riferimenti[r]
-        if "position" not in config:
-            raise RuntimeError("Specify a position window in YAML reference file!")
-        if "filename" not in config and args.folder:
-            config["filename"] = args.folder / "Aule esami.xlsx"
-        if args.dsa_room is not None and r == args.dsa_room:
-            logging.info(f"Placing dsa students in {r}")
-            matricole = pl.concat([dsa, matricole])
 
-        aula, matricole = stamp_id(
-            r, config, matricole.to_pandas(), prenotati.to_pandas()
+    positions = pl.concat([dsa, nopc, on_site]).to_frame()  # type: pl.DataFrame
+    assigned_positions = []
+    if dsa.shape[0] > 0:
+        p = dsa.to_frame("MATRICOLA").with_columns(
+            position=dsa.map_elements(
+                lambda x: place_student(rooms, x, room_name=args.dsa_room)
+            )
         )
-
-        pl.DataFrame(aula).write_excel(disposition_file, worksheet=f"Aula_{r}")
-        prenotati.filter(pl.col("AULA") == r).write_excel(
-            prenotation_file, worksheet=f"Aula_{r}"
+        assigned_positions.append(p)
+    if nopc.shape[0] > 0:
+        p = nopc.to_frame("MATRICOLA").with_columns(
+            position=nopc.map_elements(
+                lambda x: {"room": args.nopc_room, "row": 0, "col": 0}
+            )
         )
+        assigned_positions.append(p)
 
-    if matricole.shape[0] != 0:
-        raise ValueError(
-            f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing)"
-        )
+    p = on_site.to_frame("MATRICOLA").with_columns(
+        position=on_site.map_elements(lambda x: place_student(rooms, x))
+    )
+    assigned_positions.append(p)
+    assigned_positions = pl.concat(assigned_positions)
+    positions = positions.join(assigned_positions, on="MATRICOLA", how="left")
+    positions = positions.unnest("position")
 
-    if nopc:
-        prenotati.filter(pl.col("AULA") == args.nopc_room).write_excel(
-            prenotation_file, worksheet=f"Aula_{args.nopc_room}"
-        )
+    with Workbook(disposition_file) as dw, Workbook(prenotation_file) as pw:
+        for k, v in rooms.items():
+            pl.DataFrame(v).write_excel(dw, worksheet=f"Aula_{k}")
+            students_in_room = positions.filter(pl.col("room") == k)
+            students_in_room.join(prenotati, on="MATRICOLA", how="left").write_excel(
+                pw, worksheet=f"Aula_{k}"
+            )
 
-    if len(rooms) > 1 or args.nopc_students:
-        prenotati.write_excel(prenotation_file, worksheet=f"Elenco Complessivo")
-
-    logging.info("\n✔️  Students succesfully allocated\n")
+        positions.filter(pl.col("room") == args.nopc_room).join(
+            prenotati, on="MATRICOLA", how="left"
+        ).write_excel(pw, worksheet=f"Aula_{args.nopc_room}")
 
 
 if __name__ == "__main__":
