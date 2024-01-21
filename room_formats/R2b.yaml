@@ -1,0 +1,14 @@
+sits:
+  rows: [1, 3, 5, 7, 9]
+  cols: [0, 3, 7, 11, 14]
+
+banned_sits:
+  - { start: "10:0", end: "10:14" }
+  - { start: "11:0", end: "11:14" }
+  - { start: "0:0", end: "0:1" }
+
+desk: { start: "11:5", end: "11:9" }
+
+size:
+  rows: 12
+  cols: 15
