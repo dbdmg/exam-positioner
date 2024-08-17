@@ -87,6 +87,19 @@ class Room:
         return cls(Path(path).stem, np.load(path), **kwargs)
 
     @classmethod
+    def from_txt_file(cls, path: str, **kwargs):
+        """
+        Create a Room object from a txt file.
+
+        Args:
+            path (str): Path to the txt file.
+
+        Returns:
+            Room: Room object.
+        """
+        return cls(Path(path).stem, np.loadtxt(path, delimiter="\t"), **kwargs)
+
+    @classmethod
     def from_excel_sheet(cls, path: str, sheet: str, **kwargs):
         """
         Create a Room object from an Excel sheet.

@@ -48,19 +48,21 @@ def main_ui():
             filename = ui.input("Save as", placeholder="room name")
             ui.button(
                 "Save",
-                on_click=lambda: np.save("rooms/" + filename.value + ".npy", matrix),
+                on_click=lambda: np.savetxt(
+                    "rooms/" + filename.value + ".txt", matrix, delimiter="\t", fmt="%d"
+                ),
             )
 
     def load_matrix(filename):
-        if not Path("rooms/" + filename + ".npy").exists():
+        if not Path("rooms/" + filename + ".txt").exists():
             ui.notify(f"{filename} does not exist")
             return
-        matrix = np.load("rooms/" + filename + ".npy")
+        matrix = np.loadtxt("rooms/" + filename + ".txt", delimiter="\t")
         matrix_ui.refresh(matrix)
 
     with ui.row():
         with ui.dropdown_button("Room"):
-            for file in Path("rooms").glob("*.npy"):
+            for file in Path("rooms").glob("*.txt"):
                 ui.item(file.stem, on_click=lambda f=file.stem: load_matrix(f))
 
     matrix_ui()

@@ -138,6 +138,6 @@ dmypy.json
 dataset/
 *.zip
 *.xlsx
-*.txt
+#*.txt
 tania*
 luca*
