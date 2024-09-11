@@ -12,9 +12,10 @@ import yaml
 def get_args():
     parser = argparse.ArgumentParser(description=f"Crea la distribuzione dei posti in un'aula a partire dall'elenco degli studenti e dalla matrice dei posti disponibili.\n IMPORTANTE: le aule devono essere rappresentate con la cattedra in basso, le file numerate in maniera crescente, lasciando uno spazio nel caso in cui non sia presenta una fila.")
     parser.add_argument('-f', '--folder', type=Path, default=None, help="Percorso nel quale ricercare elenco studenti, file di configurazione e eventualmente excel con disposizioni, il nome del file finale avrà il nome della cartella come prefisso.")
+    parser.add_argument('-r', '--rooms', type=str, default=None, help="Aule da considerare, separate da virgola. Indicare questo oppure inserire un file di configurazione YAML.")
     parser.add_argument('--nopc_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
-    parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
+    parser.add_argument('--dsa_room', type=str, default=True, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
     parser.add_argument("--nostyle", action="store_true", help="Prevent adding style to the resulting sheet.")
     args = parser.parse_args()
@@ -30,11 +31,13 @@ def snake_j(row, i, j):
 
 def stamp_id(room_name, config, matricole, prenotati):
     window = config["position"]
+
+    # B2:U20 is the format of config["position"] (the letter can also be AA, AB, etc.)
     
     rows = list(map(int, re.findall(r"\d+", window)))
-    cols = re.findall(r"[a-zA-Z]", window)
+    cols = re.findall(r"[A-Z]+", window)
+    cols = [ord(c[-1].lower())-97 + 26*(len(c)-1) for c in cols]
 
-    cols = [ord(a.lower())-97 for a in cols]
     if "filename" in config:
         if config["filename"].name.endswith(".csv"):
             aula = pd.read_csv(config["filename"], sep="\t", header=None)
@@ -56,7 +59,7 @@ def stamp_id(room_name, config, matricole, prenotati):
     aula = aula.set_index(aula.columns[0]).rename_axis(None)
     aula.columns = col_names
 
-    aula = aula.applymap(lambda x: np.NaN if x==0 else x)
+    aula = aula.map(lambda x: np.NaN if x==0 else x)
     slots = (~aula.isna()).sum().sum()
         
     print(f"| Room {room_name.ljust(3)} | Slots: {slots}, remaining students: {len(matricole)}")
@@ -82,7 +85,7 @@ def stamp_id(room_name, config, matricole, prenotati):
             if place == 1: # force notation here
                 curr_matricola = matricole.pop(0) 
                 sn_j = snake_j(row, ord(i), j) 
-                placement.loc[i, sn_j] = str(curr_matricola)
+                placement.loc[i, sn_j] = float(curr_matricola) if not curr_matricola == "x" else -1.
                 
                 if not curr_matricola == "x":
                     prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = room_name, f"{i}{int(sn_j)}"
@@ -117,9 +120,16 @@ def main(args):
     args.yconfig = args.folder / "riferimenti_aule.yaml"
     args.name = args.folder / args.folder.stem        
 
-    with open(args.yconfig, "r") as f:
-        riferimenti = yaml.load(f, yaml.SafeLoader)
-        riferimenti = {str(k): v for k, v in riferimenti.items()}
+    if args.yconfig.exists():
+        with open(args.yconfig, "r") as f:
+            riferimenti = yaml.load(f, yaml.SafeLoader)
+            riferimenti = {str(k): v for k, v in riferimenti.items()}
+    elif args.rooms is not None:
+        with open("riferimenti_aule_all.yaml", "r") as f:
+            aule_db = yaml.load(f, yaml.SafeLoader)
+        riferimenti = {a: aule_db.get(a, aule_db.get(int(a))) for a in args.rooms.split(",")}
+    else:
+        raise FileNotFoundError(f"File {args.yconfig} not found. Please create a conf file or provide a list of rooms.") 
 
     prenotati = pd.DataFrame()
     for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
@@ -145,6 +155,8 @@ def main(args):
     if not prenotati.NOTE.dtype == 'object': prenotati.NOTE = ""
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
 
+    if args.dsa_room == True:
+        args.dsa_room = list(riferimenti.keys())[0]
     if args.dsa_room is not None:
         matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)|prenotati.NOTE.str.contains("Tempo aggiuntivo", na=False)].index.to_list()
         print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
@@ -153,18 +165,19 @@ def main(args):
     if "nopc_students" in riferimenti.keys():
         args.nopc_students = riferimenti.pop("nopc_students")
     if args.nopc_students:
-        ex_students = [int(m) for m in args.nopc_students.split(",")]
+        ex_students = [int(m) for m in str(args.nopc_students).split(",")]
         prenotati.loc[ex_students, "AULA"] = args.nopc_room
         matricole = [m for m in matricole if m not in ex_students]
         print(f"These students will be placed in {args.nopc_room}:")
         print(ex_students, "\n")
+    else:
+        ex_students = []
 
     writer_d = pd.ExcelWriter(f"{args.name}_disposizioni.xlsx")
     writer_p = pd.ExcelWriter(f"{args.name}_prenotati.xlsx")
     
-    args.rooms = [r.upper() for r in args.rooms]
-    if not args.rooms:
-        args.rooms = list(riferimenti.keys())
+    
+    args.rooms = list(riferimenti.keys())
         
     if len(args.rooms) > 1 and len(set(args.rooms)) == 1:
         room_names = [f"{i+1}{r}" for i, r in enumerate(args.rooms)]
@@ -178,7 +191,7 @@ def main(args):
         if "position" not in config:
             raise RuntimeError("Specify a position window in YAML reference file!")
         if "filename" not in config and args.folder:
-            config["filename"] = args.folder / "Aule esami.xlsx"
+            config["filename"] = args.folder / "Aule esame.xlsx"
             if not config["filename"].exists(): config["filename"] = Path.cwd() / "Aule esami Polito, disposizione posti.xlsx"
         
         if args.dsa_room is not None and room_name==args.dsa_room:
@@ -186,10 +199,11 @@ def main(args):
             matricole = matricole_dsa + matricole
         aula, matricole = stamp_id(room_name, config, matricole, prenotati)
         
+        aula = aula.map(lambda x: 'x' if x==-1 else x).map(lambda x: int(x) if isinstance(x, float) else x)
         if not args.nostyle:
+            aula = aula.rename(columns={c: f"nan_{j}" if pd.isnull(c) else c for j, c in enumerate(aula.columns)})
             aula = aula.style.apply(styled_seats, axis=None)
         
-        # aula.columns = a
         aula.to_excel(writer_d, sheet_name=f"Aula_{room_name}")
 
         prenotati[prenotati.AULA == room_name].to_excel(writer_p, sheet_name=f"Aula_{room_name}")
@@ -197,7 +211,11 @@ def main(args):
     # remove placeholders "x"
     # matricole = [m for m in matricole if m != "x"]
     if len(matricole) != 0:
-        raise ValueError(f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})")
+        if len(matricole) + len(ex_students) < 1: # Se pochi, vengono caricati in 5T: NON PIU' DISPONIBILE
+            prenotati.loc[matricole, "AULA"] = args.nopc_room
+            print(f"\nℹ️  {len(matricole)} extra students are placed in {args.nopc_room}")
+        else:
+            raise ValueError(f"⚠️  Designated rooms are not sufficient, {len(matricole)} students missing ({matricole})")
 
     if args.nopc_students:
         prenotati[prenotati.AULA == args.nopc_room].to_excel(writer_p, sheet_name=f"Aula_{args.nopc_room}")

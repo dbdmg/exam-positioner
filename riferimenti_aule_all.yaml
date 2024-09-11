@@ -1,0 +1,63 @@
+1:
+  sheet: "Aule Dispari"
+  position: "B2:AA18"
+3:
+  sheet: "Aule Dispari"
+  position: "B28:Y45"
+5:
+  sheet: "Aule Dispari"
+  position: "B54:AA70"
+2:
+  sheet: "Aule Pari"
+  position: "B3:Y19"
+4:
+  sheet: "Aule Pari"
+  position: "B29:Y45"
+6:
+  sheet: "Aule Pari"
+  position: "B55:W71"
+8:
+  sheet: "Aule Pari"
+  position: "B79:X94"
+
+  
+R1:
+  sheet: "Aule R"
+  position: "B2:U20"
+R2:
+  sheet: "Aule R"
+  position: "B2:U20"
+R3:
+  sheet: "Aule R"
+  position: "B2:U20"
+R4:
+  sheet: "Aule R"
+  position: "B2:U20"
+
+
+R1b:
+  sheet: "Aule R"
+  position: "B28:Q38"
+R2b:
+  sheet: "Aule R"
+  position: "B28:Q38"
+R3b:
+  sheet: "Aule R"
+  position: "B28:Q38"
+R4b:
+  sheet: "Aule R"
+  position: "B28:Q38"
+
+
+1P:
+  sheet: "Aule P"
+  position: "B3:R18"
+2P:
+  sheet: "Aule P"
+  position: "B3:R18"
+3P:
+  sheet: "Aule P"
+  position: "B3:R18"
+4P:
+  sheet: "Aule P"
+  position: "B3:R18"
