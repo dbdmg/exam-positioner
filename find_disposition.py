@@ -88,7 +88,7 @@ def stamp_id(room_name, config, matricole, prenotati):
                 placement.loc[i, sn_j] = float(curr_matricola) if not curr_matricola == "x" else -1.
                 
                 if not curr_matricola == "x":
-                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = room_name, f"{i}{int(sn_j)}"
+                    prenotati.loc[curr_matricola, ["AULA", "POSTO"]] = str(room_name), f"{i}{int(sn_j)}"
 
     placement = placement.fillna("")
     placement[""] = ""
@@ -127,7 +127,13 @@ def main(args):
     elif args.rooms is not None:
         with open("riferimenti_aule_all.yaml", "r") as f:
             aule_db = yaml.load(f, yaml.SafeLoader)
-        riferimenti = {a: aule_db.get(a, aule_db.get(int(a))) for a in args.rooms.split(",")}
+        def process_room(room):
+            try:
+                return int(room)
+            except:
+                return room
+            
+        riferimenti = {a: aule_db.get(a, aule_db.get(process_room(a))) for a in args.rooms.split(",")}
     else:
         raise FileNotFoundError(f"File {args.yconfig} not found. Please create a conf file or provide a list of rooms.") 
 
@@ -150,6 +156,7 @@ def main(args):
     prenotati.columns = [c.strip() for c in prenotati.columns]
     prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
     prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
+    prenotati.AULA = prenotati.AULA.astype('str')
     
     # prenotati.NOTE = prenotati.NOTE.astype('str')
     if not prenotati.NOTE.dtype == 'object': prenotati.NOTE = ""

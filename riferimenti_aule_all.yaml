@@ -61,3 +61,13 @@ R4b:
 4P:
   sheet: "Aule P"
   position: "B3:R18"
+
+1T:
+  sheet: "Aule T"
+  position: "B2:Q8"
+2T:
+  sheet: "Aule T"
+  position: "B16:R24"
+4T:
+  sheet: "Aule T"
+  position: "B32:M45"
