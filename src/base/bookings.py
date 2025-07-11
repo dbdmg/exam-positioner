@@ -28,18 +28,17 @@ class Bookings:
         self.assignations.append({"MATRICOLA": id, "AULA": room})
 
     def unassigned(self):
-        return (
-            self.dsa.height
-            + self.no_pc.height
-            + self.on_site.height
-            - len(self.assignations)
-        )
+        assignations = pl.DataFrame(self.assignations)
+        assigned_ids = set(assignations["MATRICOLA"]) if self.assignations else set()
+        unassigned = self.on_site.filter(pl.col("MATRICOLA").is_in(assigned_ids).not_())
+
+        return unassigned
 
     def save_assignations(self, path: str):
-        self.assignation |= dict(
-            zip(self.no_pc["MATRICOLA"], ["NoPC"] * len(self.no_pc))
+        assignation = pl.DataFrame(
+            self.assignations
+            + list(dict(zip(self.no_pc["MATRICOLA"], ["NoPC"] * len(self.no_pc))))
         )
-        self.assignation = pl.DataFrame(self.assignations)
-        all_bookings = pl.concat([self.dsa, self.no_pc, self.on_site])
-        all_bookings = all_bookings.join(self.assignation, on="MATRICOLA", how="left")
+        all_bookings = pl.concat([self.no_pc, self.on_site])
+        all_bookings = all_bookings.join(assignation, on="MATRICOLA", how="left")
         all_bookings.write_csv(path)

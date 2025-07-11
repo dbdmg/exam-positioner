@@ -1,14 +1,15 @@
 import numpy as np
+
 from src import Bookings, Room
 
 
 def first_available_placing(rooms: list[Room], bookings: Bookings):
     # Place all dsa bookings into first room
     dsa_room = rooms[0]
-    for booking in bookings.dsa["MATRICOLA"]:
-        row, col = find_empty_spot(dsa_room)
-        dsa_room.assign(row, col, booking)
-        bookings.assign_to_room(booking, dsa_room.name)
+    # for booking in bookings.dsa["MATRICOLA"]:
+    #    row, col = find_empty_spot(dsa_room)
+    #    dsa_room.assign(row, col, booking)
+    #    bookings.assign_to_room(booking, dsa_room.name)
     # Place all the others
     for booking in bookings.on_site["MATRICOLA"]:
         # Find the room with the most empty spots

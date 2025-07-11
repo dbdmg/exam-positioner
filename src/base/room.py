@@ -18,7 +18,7 @@ class Room:
     """
 
     def __init__(self, name: str, matrix: np.ndarray, **kwargs):
-        self.matrix = matrix
+        self.matrix = matrix.astype(np.int64)
         self.name = name
 
     @classmethod
@@ -196,5 +196,5 @@ class Room:
         ax.set_yticks(np.arange(self.matrix.shape[0]))
         ax.set_yticklabels(row_names)
 
-        ax.set_title(self.name)
+        ax.set_title(f"Aula {self.name}")
         return fig
