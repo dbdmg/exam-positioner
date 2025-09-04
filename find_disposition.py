@@ -15,8 +15,9 @@ def get_args():
     parser.add_argument('-r', '--rooms', type=str, default=None, help="Aule da considerare, separate da virgola. Indicare questo oppure inserire un file di configurazione YAML.")
     parser.add_argument('--nopc_students', type=str, default="", help="Lista delle matricole (senza spazi, separate da virgola) degli studenti che necessitano di essere posizionati in aula multimediale.")
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
-    parser.add_argument('--dsa_room', type=str, default=True, help="Aula nella quale saranno posizionati gli studenti DSA.")
+    parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
+    parser.add_argument("--random_order", action="store_true", help="Randomize order of students instead of alphabetical.")
     parser.add_argument("--nostyle", action="store_true", help="Prevent adding style to the resulting sheet.")
     args = parser.parse_args()
     return args
@@ -59,7 +60,7 @@ def stamp_id(room_name, config, matricole, prenotati):
     aula = aula.set_index(aula.columns[0]).rename_axis(None)
     aula.columns = col_names
 
-    aula = aula.map(lambda x: np.NaN if x==0 else x)
+    aula = aula.map(lambda x: np.nan if x==0 else x)
     slots = (~aula.isna()).sum().sum()
         
     print(f"| Room {room_name.ljust(3)} | Slots: {slots}, remaining students: {len(matricole)}")
@@ -67,8 +68,12 @@ def stamp_id(room_name, config, matricole, prenotati):
     if len(matricole) < np.nansum(aula.values):
         matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
     
-    aula = aula.rename(columns={c: "" for c in aula.columns if type(c)==str and "Unnamed" in c})
-    aula = aula.rename(index = {i: chr(int(i)+64) if i>0 else np.NaN for i in aula.index})
+        # Allow one column to have an empty name (first unnamed column)
+        unnamed_cols = [c for c in aula.columns if type(c)==str and "Unnamed" in c]
+        if unnamed_cols:
+            aula = aula.rename(columns={unnamed_cols[0]: ""})
+            # Optionally, keep other unnamed columns as is or handle as needed
+    aula = aula.rename(index = {i: chr(int(i)+64) if i>0 else np.nan for i in aula.index})
         
     placement = aula.copy()
     
@@ -93,26 +98,49 @@ def stamp_id(room_name, config, matricole, prenotati):
     placement = placement.fillna("")
     placement[""] = ""
     
-    placement.loc[""] = pd.Series(
-        {c:"Professor Desk" if c==placement.columns[placement.shape[1]//2] else "" for c in placement.columns}, 
-        )
+    # Center the professor desk, covering multiple columns
+    n_cols = placement.shape[1] - 1
+    desk_row = {}
+    if n_cols % 2 == 1:
+        # Odd: cover central, one before, one after
+        center = n_cols // 2
+        for idx, c in enumerate(placement.columns):
+            if idx in [center-1, center, center+1]:
+                desk_row[c] = "Professor Desk"
+            else:
+                desk_row[c] = ""
+    else:
+        # Even: cover the two central columns
+        center1 = n_cols // 2 - 1
+        center2 = n_cols // 2
+        for idx, c in enumerate(placement.columns):
+            if idx in [center1, center2]:
+                desk_row[c] = "Professor Desk"
+            else:
+                desk_row[c] = ""
+    # add one empty row before the desk
+    placement.loc["   "] = ""
+    placement.loc["desk"] = pd.Series(desk_row)
     return placement, matricole
 
 
 def styled_seats(x):
-    checkerboard = lambda d: np.row_stack(d[0]*(np.r_[d[1]*[True,False]], np.r_[d[1]*[False,True]]))[:d[0], :d[1]]
-    if np.NaN in x.index: x.loc[np.NaN, :] = np.NaN
-    if np.NaN in x.columns: x[[np.NaN]] = np.NaN
-    df1 = pd.DataFrame(np.where(x.notna()&checkerboard(x.shape), 
-                                'background-color: lightgrey;\
-                                width: 50px;\
-                                text-align: center',
-                                'width: 50px;\
-                                text-align: center'
-                               ),
-                        index=x.index, columns=x.columns
-                       )
-    df1.iloc[-1] = x.iloc[-1].apply(lambda x: "" if x == "" else 'background-color: lightgrey; text-align: center')
+    checkerboard = lambda d: np.vstack(d[0]*(np.r_[d[1]*[True,False]], np.r_[d[1]*[False,True]]))[:d[0], :d[1]]
+    def style_cell(val, row_idx, col_idx):
+        col = x.columns[col_idx]
+        if isinstance(col, str) and col.strip() == "":
+            return 'width: 50px; text-align: center'
+        if pd.notna(val) and checkerboard(x.shape)[row_idx, col_idx]:
+            return 'background-color: lightgrey; width: 50px; text-align: center'
+        return 'width: 50px; text-align: center'
+    df1 = pd.DataFrame(
+        [[style_cell(x.iloc[i, j], i, j) for j in range(x.shape[1])] for i in range(x.shape[0])],
+        index=x.index, columns=x.columns
+    )
+    # blank style to all the rows with empty string as index
+    df1.loc[x.index.str.strip() == ""] = ['' for _ in range(x.shape[1])]
+    df1.loc[x.index.isna()] = ['' for _ in range(x.shape[1])]
+    df1.iloc[-1] = ["" if x == "" else 'background-color: lightgrey; text-align: center' for x in x.iloc[-1]]
     return df1
 
 
@@ -154,20 +182,26 @@ def main(args):
     if plen != len(prenotati): print("Attenzione: studenti duplicati nella tabella\n")
 
     prenotati.columns = [c.strip() for c in prenotati.columns]
-    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1).sort_values(by="COGNOME").set_index("MATRICOLA")
-    prenotati = prenotati.assign(AULA=np.NaN, POSTO=np.NaN)
-    prenotati.AULA = prenotati.AULA.astype('str')
+    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1)
+    
+    if args.random_order:
+        prenotati = prenotati.sample(frac=1).set_index("MATRICOLA")
+    else:
+        prenotati = prenotati.sort_values(by="COGNOME").set_index("MATRICOLA")
+    
+    prenotati = prenotati.assign(AULA=np.nan, POSTO=np.nan)
+    prenotati.AULA = prenotati.AULA.astype('object')
+    prenotati.POSTO = prenotati.POSTO.astype('object')
     
     # prenotati.NOTE = prenotati.NOTE.astype('str')
     if not prenotati.NOTE.dtype == 'object': prenotati.NOTE = ""
     matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
 
-    if args.dsa_room == True:
+    if not args.dsa_room:
         args.dsa_room = list(riferimenti.keys())[0]
-    if args.dsa_room is not None:
-        matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)|prenotati.NOTE.str.contains("Tempo aggiuntivo", na=False)].index.to_list()
-        print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
-        matricole = [m for m in matricole if m not in matricole_dsa]
+    matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)|prenotati.NOTE.str.contains("Tempo aggiuntivo", na=False)].index.to_list()
+    print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
+    matricole = [m for m in matricole if m not in matricole_dsa]
     
     if "nopc_students" in riferimenti.keys():
         args.nopc_students = riferimenti.pop("nopc_students")
@@ -208,7 +242,7 @@ def main(args):
         
         aula = aula.map(lambda x: 'x' if x==-1 else x).map(lambda x: int(x) if isinstance(x, float) else x)
         if not args.nostyle:
-            aula = aula.rename(columns={c: f"nan_{j}" if pd.isnull(c) else c for j, c in enumerate(aula.columns)})
+            aula = aula.rename(columns={c: j * " " if pd.isnull(c) and c != "" else c for j, c in enumerate(aula.columns)})
             aula = aula.style.apply(styled_seats, axis=None)
         
         aula.to_excel(writer_d, sheet_name=f"Aula_{room_name}")
@@ -239,6 +273,24 @@ def main(args):
 
     writer_d.close()
     writer_p.close()
+
+    # Merge 'Professor Desk' cells in the exported Excel file (after closing writer)
+    import openpyxl
+    wb = openpyxl.load_workbook(f"{args.name}_disposizioni.xlsx")
+    for room_name in (room_names):
+        if f"Aula_{room_name}" in wb.sheetnames:
+            ws = wb[f"Aula_{room_name}"]
+            for row in ws.iter_rows():
+                desk_cells = [cell for cell in row if cell.value == "Professor Desk"]
+                if desk_cells:
+                    indices = [cell.column for cell in desk_cells]
+                    if indices:
+                        start = min(indices)
+                        end = max(indices)
+                        ws.merge_cells(start_row=desk_cells[0].row, start_column=start,
+                                       end_row=desk_cells[0].row, end_column=end)
+                    break
+    wb.save(f"{args.name}_disposizioni.xlsx")
         
     
 if __name__ == '__main__':

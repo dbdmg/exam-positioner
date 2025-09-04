@@ -7,6 +7,9 @@
 5:
   sheet: "Aule Dispari"
   position: "B54:AA70"
+27:
+  sheet: "Aule 2729"
+  position: "B2:R17"
 2:
   sheet: "Aule Pari"
   position: "B3:Y19"
