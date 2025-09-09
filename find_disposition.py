@@ -120,7 +120,7 @@ def stamp_id(room_name, config, matricole, prenotati):
                 desk_row[c] = ""
     # add one empty row before the desk
     placement.loc["   "] = ""
-    placement.loc["desk"] = pd.Series(desk_row)
+    placement.loc["      "] = pd.Series(desk_row)
     return placement, matricole
 
 
@@ -167,11 +167,11 @@ def main(args):
 
     prenotati = pd.DataFrame()
     for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
-        if p.suffix == ".xlsx": 
+        if p.suffix == ".xlsx" or p.suffix == ".xls": 
             tmp = pd.read_excel(p) 
-            row_toskip = (tmp.iloc[:,0]=="MATRICOLA").argmax()
+            row_toskip = (tmp.iloc[:,0]=="#").argmax()
             col = tmp.xs(row_toskip)
-            tmp = tmp.drop(range(row_toskip+1))
+            tmp = tmp.drop(range(row_toskip+1)).reset_index(drop=True)
             tmp.columns = col
         else:
             tmp = pd.read_csv(p)
@@ -264,12 +264,10 @@ def main(args):
     if len(room_names) > 1 or args.nopc_students:
         prenotati.to_excel(writer_p, sheet_name=f"Elenco Complessivo")
         
-    with open(f"{args.name}_limiti.txt", "w") as f:
-        limiti = prenotati[prenotati.AULA != args.nopc_room].groupby("AULA").agg({
-                "COGNOME": ["min", "max"]
-            })
-        f.write(str(limiti))
-        print("\n✔️  Students succesfully allocated\n", str(limiti))
+    limiti = prenotati[prenotati.AULA != args.nopc_room].groupby("AULA").agg({
+            "COGNOME": ["min", "max"]
+        })
+    print("\n✔️  Students succesfully allocated\n", str(limiti))
 
     writer_d.close()
     writer_p.close()
