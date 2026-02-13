@@ -17,16 +17,46 @@ def get_args():
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
     parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
-    parser.add_argument("--random_order", action="store_true", help="Randomize order of students instead of alphabetical.")
+    parser.add_argument("--order", type=str, default='matricola', choices=['matricola', 'cognome', 'random'], help="Order in which to arrange students.")
     parser.add_argument("--nostyle", action="store_true", help="Prevent adding style to the resulting sheet.")
     args = parser.parse_args()
     return args
 
 
 def snake_j(row, i, j):
-    rev_j = row.index[len(row) - row.index.get_loc(j) - 1]
-    if i % 4 == 2 and not np.isnan(row[rev_j]):
-         return rev_j
+    # Determine numeric row number (1-based). Accept either an ordinal int or a letter.
+    if isinstance(i, int):
+        # If caller passed ord(letter), convert to 1-based A=1
+        try:
+            row_num = i - 64
+        except Exception:
+            row_num = i
+    elif isinstance(i, str) and len(i) > 0:
+        row_num = ord(i.upper()[0]) - 64
+    else:
+        # Fallback: try to use as-is
+        try:
+            row_num = int(i)
+        except Exception:
+            row_num = 0
+
+    # Find current position and its mirrored (snake) position
+    try:
+        pos = row.index.get_loc(j)
+    except Exception:
+        return j
+    rev_pos = len(row.index) - pos - 1
+    rev_j = row.index[rev_pos]
+
+    # Use alternating direction: even-numbered rows are filled right-to-left.
+    # Check availability at the mirrored position using pandas safe NA check.
+    try:
+        available = pd.notna(row.iloc[rev_pos])
+    except Exception:
+        available = False
+
+    if row_num % 2 == 0 and available:
+        return rev_j
     return j
 
 
@@ -184,10 +214,10 @@ def main(args):
     prenotati.columns = [c.strip() for c in prenotati.columns]
     prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1)
     
-    if args.random_order:
+    if args.order == 'random':
         prenotati = prenotati.sample(frac=1).set_index("MATRICOLA")
     else:
-        prenotati = prenotati.sort_values(by="COGNOME").set_index("MATRICOLA")
+        prenotati = prenotati.sort_values(by=args.order.upper()).set_index("MATRICOLA")
     
     prenotati = prenotati.assign(AULA=np.nan, POSTO=np.nan)
     prenotati.AULA = prenotati.AULA.astype('object')
@@ -266,13 +296,12 @@ def main(args):
         
     limiti = prenotati[prenotati.AULA != args.nopc_room].groupby("AULA").agg({
             "COGNOME": ["min", "max"]
-        })
+        }).sort_values(by=("COGNOME", "min"), ascending=True)
     print("\n✔️  Students succesfully allocated\n", str(limiti))
 
     writer_d.close()
     writer_p.close()
 
-    # Merge 'Professor Desk' cells in the exported Excel file (after closing writer)
     import openpyxl
     wb = openpyxl.load_workbook(f"{args.name}_disposizioni.xlsx")
     for room_name in (room_names):
