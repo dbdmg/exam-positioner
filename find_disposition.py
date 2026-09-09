@@ -1,12 +1,21 @@
 #!/usr/bin/env python
 
 # from ast import arg
+import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
 import argparse
 import re
 import yaml
+
+# Ensure stdout/stderr can print non-ASCII (e.g. the ✔️ status emoji) on
+# consoles whose default encoding is not UTF-8 (e.g. Windows cp1252).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 
 def get_args():
@@ -17,7 +26,7 @@ def get_args():
     parser.add_argument('--nopc_room', type=str, default="5T", help="Aula multimediale nella quale inserire nopc_students. Default è '5T'.")
     parser.add_argument('--dsa_room', type=str, default=None, help="Aula nella quale saranno posizionati gli studenti DSA.")
     parser.add_argument('-n', '--name', type=str, default="COD_yyyymmdd", help="Prefisso del nome dei files di output. Default: '<COD>_yyyymmdd'.")
-    parser.add_argument("--order", type=str, default='matricola', choices=['matricola', 'cognome', 'random'], help="Order in which to arrange students.")
+    parser.add_argument("--order", type=str, default='cognome', choices=['matricola', 'cognome', 'random'], help="Order in which to arrange students. Default: cognome.")
     parser.add_argument("--nostyle", action="store_true", help="Prevent adding style to the resulting sheet.")
     args = parser.parse_args()
     return args
@@ -97,12 +106,11 @@ def stamp_id(room_name, config, matricole, prenotati):
 
     if len(matricole) < np.nansum(aula.values):
         matricole += ["x" for _ in range(int(np.nansum(aula.values)) - len(matricole))]
-    
-        # Allow one column to have an empty name (first unnamed column)
-        unnamed_cols = [c for c in aula.columns if type(c)==str and "Unnamed" in c]
-        if unnamed_cols:
-            aula = aula.rename(columns={unnamed_cols[0]: ""})
-            # Optionally, keep other unnamed columns as is or handle as needed
+
+    # Allow one column to have an empty name (first unnamed column)
+    unnamed_cols = [c for c in aula.columns if type(c)==str and "Unnamed" in c]
+    if unnamed_cols:
+        aula = aula.rename(columns={unnamed_cols[0]: ""})
     aula = aula.rename(index = {i: chr(int(i)+64) if i>0 else np.nan for i in aula.index})
         
     placement = aula.copy()
@@ -174,6 +182,15 @@ def styled_seats(x):
     return df1
 
 
+def _header_row_index(tmp):
+    col0 = tmp.iloc[:, 0]
+    for marker in ("#", "MATRICOLA"):
+        matches = col0 == marker
+        if matches.any():
+            return int(matches.to_numpy().argmax())
+    return 0
+
+
 def main(args):
     args.yconfig = args.folder / "riferimenti_aule.yaml"
     args.name = args.folder / args.folder.stem        
@@ -196,10 +213,14 @@ def main(args):
         raise FileNotFoundError(f"File {args.yconfig} not found. Please create a conf file or provide a list of rooms.") 
 
     prenotati = pd.DataFrame()
-    for p in args.folder.glob("VISAP_Elenco_Studenti_*"):
-        if p.suffix == ".xlsx" or p.suffix == ".xls": 
+    student_files = list(args.folder.glob("VISAP_Elenco_Studenti_*"))
+    csv_files = [p for p in student_files if p.suffix.lower() == ".csv"]
+    if csv_files:
+        student_files = csv_files
+    for p in student_files:
+        if p.suffix.lower() == ".xlsx" or p.suffix.lower() == ".xls": 
             tmp = pd.read_excel(p) 
-            row_toskip = (tmp.iloc[:,0]=="#").argmax()
+            row_toskip = _header_row_index(tmp)
             col = tmp.xs(row_toskip)
             tmp = tmp.drop(range(row_toskip+1)).reset_index(drop=True)
             tmp.columns = col
@@ -212,7 +233,7 @@ def main(args):
     if plen != len(prenotati): print("Attenzione: studenti duplicati nella tabella\n")
 
     prenotati.columns = [c.strip() for c in prenotati.columns]
-    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1)
+    prenotati = prenotati.drop(["DATA PRENOTAZIONE", "DOMANDA", "RISPOSTA", "CORSO", "CDL", "NUMERO CORSO"], axis=1, errors="ignore")
     
     if args.order == 'random':
         prenotati = prenotati.sample(frac=1).set_index("MATRICOLA")
@@ -223,13 +244,15 @@ def main(args):
     prenotati.AULA = prenotati.AULA.astype('object')
     prenotati.POSTO = prenotati.POSTO.astype('object')
     
-    # prenotati.NOTE = prenotati.NOTE.astype('str')
-    if not prenotati.NOTE.dtype == 'object': prenotati.NOTE = ""
-    matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", na=False)].index.to_list()
+    prenotati["NOTE"] = prenotati["NOTE"].fillna("").astype(str)
+    matricole = prenotati[~prenotati.NOTE.str.contains("Esame online", case=False, na=False)].index.to_list()
 
     if not args.dsa_room:
         args.dsa_room = list(riferimenti.keys())[0]
-    matricole_dsa = prenotati[prenotati.NOTE.str.contains("Dsa", na=False)|prenotati.NOTE.str.contains("Tempo aggiuntivo", na=False)].index.to_list()
+    matricole_dsa = prenotati[
+        prenotati.NOTE.str.contains("Dsa", case=False, na=False)
+        | prenotati.NOTE.str.contains("Tempo aggiuntivo", case=False, na=False)
+    ].index.to_list()
     print(f"\nDsa students ({', '.join(prenotati[prenotati.index.isin(matricole_dsa)].COGNOME)}) will be placed in room {args.dsa_room}\n")
     matricole = [m for m in matricole if m not in matricole_dsa]
     
@@ -298,6 +321,8 @@ def main(args):
             "COGNOME": ["min", "max"]
         }).sort_values(by=("COGNOME", "min"), ascending=True)
     print("\n✔️  Students succesfully allocated\n", str(limiti))
+    with open(f"{args.name}_limiti.txt", "w", encoding="utf-8") as f:
+        f.write(str(limiti))
 
     writer_d.close()
     writer_p.close()
@@ -307,6 +332,7 @@ def main(args):
     for room_name in (room_names):
         if f"Aula_{room_name}" in wb.sheetnames:
             ws = wb[f"Aula_{room_name}"]
+            ws["A1"] = f"aula {room_name}"
             for row in ws.iter_rows():
                 desk_cells = [cell for cell in row if cell.value == "Professor Desk"]
                 if desk_cells:
@@ -323,7 +349,3 @@ def main(args):
 if __name__ == '__main__':
     args = get_args()
     main(args)
-
-
-
-    
